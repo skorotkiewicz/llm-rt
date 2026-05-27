@@ -15,6 +15,35 @@ ruby llm_proxy.rb
 
 The proxy listens on `0.0.0.0:8888` by default.
 
+For your local LLM at `192.168.0.124:8888`, run the saved local setup:
+
+```sh
+./run_local_proxy.sh
+```
+
+That starts the Ruby proxy at `http://127.0.0.1:8899/v1` and forwards to `http://192.168.0.124:8888/v1`.
+
+The saved local curl check is:
+
+```sh
+./curl_local_proxy.sh
+```
+
+Manual equivalent:
+
+```sh
+curl -sS -i -m 60 http://127.0.0.1:8899/v1/chat/completions \
+  -H 'Authorization: Bearer user-a' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gemma4",
+    "messages": [{"role": "user", "content": "Reply with exactly: proxy ok"}],
+    "max_tokens": 16
+  }'
+```
+
+Verified result through the proxy: the upstream replied with `proxy ok` and the proxy returned `X-RateLimit-Remaining: 0` with the local test bucket.
+
 Run the smoke test:
 
 ```sh
