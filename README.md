@@ -13,7 +13,7 @@ BASE_MODEL=gemma4 \
 ruby llm_proxy.rb
 ```
 
-The proxy listens on `0.0.0.0:8888` by default.
+The proxy listens on `0.0.0.0:8899` by default.
 
 For your local LLM at `192.168.0.124:8888`, run the saved local setup:
 
