@@ -16,7 +16,7 @@ class Config
 
   def initialize(env)
     @host = env_value(env, "HOST", default: "0.0.0.0")
-    @port = integer(env_value(env, "PORT", default: "8888"), "PORT")
+    @port = integer(env_value(env, "PORT", default: "8899"), "PORT")
     @upstream_base_url = env_value(env, "UPSTREAM_BASE_URL", "BASE_API_URL", "base_api_url")
     @upstream_api_key = env_value(env, "UPSTREAM_API_KEY", "BASE_API_KEY", "base_api_key")
     @base_model = env_value(env, "UPSTREAM_MODEL", "BASE_MODEL", "base_model")
