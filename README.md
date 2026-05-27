@@ -2,6 +2,8 @@
 
 Small Ruby prototype for an OpenAI-compatible LLM proxy with a refillable token bucket.
 
+It uses only Ruby standard libraries: no gems, no Rack, no WEBrick.
+
 ## Run
 
 ```sh
@@ -12,6 +14,12 @@ ruby llm_proxy.rb
 ```
 
 The proxy listens on `0.0.0.0:8888` by default.
+
+Run the smoke test:
+
+```sh
+ruby test_llm_proxy.rb
+```
 
 ## Token bucket settings
 
