@@ -209,6 +209,155 @@ class CostEstimator
   end
 end
 
+class HttpRequest
+  attr_reader :request_method, :path, :query_string, :header, :body, :remote_ip
+
+  def initialize(request_method:, target:, header:, body:, remote_ip:)
+    uri = URI.parse(target)
+    @request_method = request_method
+    @path = uri.path.empty? ? "/" : uri.path
+    @query_string = uri.query
+    @header = header
+    @body = body
+    @remote_ip = remote_ip
+  rescue URI::InvalidURIError
+    @request_method = request_method
+    @path = target.split("?").first
+    @query_string = target.split("?", 2)[1]
+    @header = header
+    @body = body
+    @remote_ip = remote_ip
+  end
+
+  def [](name)
+    values = @header[name.downcase]
+    values&.join(", ")
+  end
+end
+
+class HttpResponse
+  REASONS = {
+    200 => "OK",
+    204 => "No Content",
+    400 => "Bad Request",
+    401 => "Unauthorized",
+    404 => "Not Found",
+    502 => "Bad Gateway"
+  }.freeze
+
+  attr_accessor :status, :body
+
+  def initialize
+    @status = 200
+    @headers = {}
+    @body = ""
+  end
+
+  def []=(name, value)
+    @headers[name] = value
+  end
+
+  def write(socket)
+    response_body = status == 204 ? "" : body.to_s
+    @headers["Content-Length"] = response_body.bytesize.to_s
+    @headers["Connection"] = "close"
+
+    socket.write("HTTP/1.1 #{status} #{REASONS.fetch(status, "OK")}\r\n")
+    @headers.each { |name, value| socket.write("#{name}: #{value}\r\n") }
+    socket.write("\r\n")
+    socket.write(response_body) unless response_body.empty?
+  end
+end
+
+class HttpServer
+  attr_reader :port
+
+  def initialize(host:, port:, app:)
+    @server = TCPServer.new(host, port)
+    @port = @server.addr[1]
+    @app = app
+    @running = true
+  end
+
+  def start
+    while @running
+      socket = @server.accept
+      Thread.new(socket) { |client| handle_client(client) }
+    end
+  rescue IOError
+    nil
+  end
+
+  def shutdown
+    @running = false
+    @server.close unless @server.closed?
+  end
+
+  private
+
+  def handle_client(socket)
+    request = read_request(socket)
+    response = HttpResponse.new
+
+    if request
+      @app.call(request, response)
+    else
+      response.status = 400
+      response["Content-Type"] = "application/json"
+      response.body = JSON.generate(error: { message: "Malformed HTTP request" })
+    end
+
+    response.write(socket)
+  rescue StandardError => error
+    warn "#{error.class}: #{error.message}"
+  ensure
+    socket.close unless socket.closed?
+  end
+
+  def read_request(socket)
+    request_line = socket.gets
+    return unless request_line
+
+    method, target, _version = request_line.strip.split(/\s+/, 3)
+    return unless method && target
+
+    headers = read_headers(socket)
+    body = read_body(socket, headers)
+
+    HttpRequest.new(
+      request_method: method,
+      target: target,
+      header: headers,
+      body: body,
+      remote_ip: socket.peeraddr[3]
+    )
+  end
+
+  def read_headers(socket)
+    headers = {}
+
+    while (line = socket.gets)
+      line = line.chomp
+      break if line.empty?
+
+      name, value = line.split(":", 2)
+      next unless name && value
+
+      headers[name.downcase] ||= []
+      headers[name.downcase] << value.strip
+    end
+
+    headers
+  end
+
+  def read_body(socket, headers)
+    length = headers["content-length"]&.first.to_i
+    return "" if length <= 0
+
+    socket.read(length).to_s
+  end
+end
+
 class ProxyApp
   COMPLETION_PATHS = %w[/v1/chat/completions /v1/completions].freeze
   HOP_BY_HOP_HEADERS = %w[
@@ -583,24 +732,20 @@ class ProxyApp
   end
 end
 
-config = Config.new(ENV)
-buckets = BucketStore.new(config)
+if $PROGRAM_NAME == __FILE__
+  config = Config.new(ENV)
+  buckets = BucketStore.new(config)
+  app = ProxyApp.new(config, buckets)
 
-server = WEBrick::HTTPServer.new(
-  BindAddress: config.host,
-  Port: config.port,
-  AccessLog: [],
-  Logger: WEBrick::Log.new($stderr, WEBrick::Log::INFO)
-)
+  server = HttpServer.new(host: config.host, port: config.port, app: app)
 
-server.mount("/", ProxyServlet, config, buckets)
+  trap("INT") { server.shutdown }
+  trap("TERM") { server.shutdown }
 
-trap("INT") { server.shutdown }
-trap("TERM") { server.shutdown }
+  warn "llm proxy listening on #{config.host}:#{server.port}"
+  warn "upstream: #{config.upstream_base_url || "(not configured)"}"
+  warn "model: #{config.base_model || "(unchanged)"}"
+  warn "bucket: max=#{config.max_tokens}, refill=#{config.refill_tokens}/#{config.refill_interval_seconds}s"
 
-warn "llm proxy listening on #{config.host}:#{config.port}"
-warn "upstream: #{config.upstream_base_url || "(not configured)"}"
-warn "model: #{config.base_model || "(unchanged)"}"
-warn "bucket: max=#{config.max_tokens}, refill=#{config.refill_tokens}/#{config.refill_interval_seconds}s"
-
-server.start
+  server.start
+end
